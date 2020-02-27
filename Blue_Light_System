@@ -1,0 +1,158 @@
+#include "Adafruit_FONA.h"
+
+#define FONA_RX 3
+#define FONA_TX 2
+#define FONA_RST 4
+#define PUSH_BUTTON 6
+
+// this is a large buffer for replies
+char replybuffer[255];
+
+#include <SoftwareSerial.h>
+SoftwareSerial fonaSS = SoftwareSerial(FONA_TX, FONA_RX);
+SoftwareSerial *fonaSerial = &fonaSS;
+// Use this for FONA 800 and 808s
+//Adafruit_FONA fona = Adafruit_FONA(FONA_RST);
+// Use this one for FONA 3G
+Adafruit_FONA_3G fona = Adafruit_FONA_3G(FONA_RST);
+
+uint8_t readline(char *buff, uint8_t maxbuff, uint16_t timeout = 0);
+
+uint8_t type;
+
+void setup() 
+{
+  pin_setup();
+  
+  while (!Serial);
+  Serial.begin(115200);
+  Serial.println(F("FONA basic test"));
+  Serial.println(F("Initializing....(May take 3 seconds)"));
+
+  fonaSerial->begin(4800);
+  if (! fona.begin(*fonaSerial)) {
+    Serial.println(F("Couldn't find FONA"));
+    while (1);
+  }
+}
+
+int button_state = LOW;
+const char number[11] = "12563618339";
+bool call_active = false;
+unsigned long last_debounce_time = 0;
+unsigned long debounce_delay = 3000;        // Only accept input every 3 seconds
+
+void loop() 
+{
+  Serial.println(F("Waiting for button press..."));
+  while(true)
+  {
+    button_state = digitalRead(PUSH_BUTTON);
+    if ( (millis() - last_debounce_time) > debounce_delay)
+    {
+      // If button has been pressed
+      if(button_state == HIGH)
+      {
+        last_debounce_time = millis();
+        // If no call is active, make the call
+        if(call_active == false)
+        {
+          Serial.print(F("Calling ")); Serial.println(number);
+          if (!fona.callPhone(number)) 
+          {
+            Serial.println(F("Failed"));
+          }
+          else 
+          {
+            call_active = true;
+            Serial.println(F("Sent!"));
+          }       
+        }
+        // Else a call is active, hang up 
+        else
+        {
+          if (! fona.hangUp()) 
+          {
+            call_active = false;
+            Serial.println(F("Failed"));
+          } 
+          else 
+          {
+            call_active = false;
+            Serial.println(F("OK!"));
+          }
+        }
+      }
+    }
+  }
+}
+
+
+void pin_setup()
+{
+  pinMode(PUSH_BUTTON, INPUT_PULLUP);
+}
+
+void flushSerial() {
+  while (Serial.available())
+    Serial.read();
+}
+
+char readBlocking() {
+  while (!Serial.available());
+  return Serial.read();
+}
+uint16_t readnumber() {
+  uint16_t x = 0;
+  char c;
+  while (! isdigit(c = readBlocking())) {
+    //Serial.print(c);
+  }
+  Serial.print(c);
+  x = c - '0';
+  while (isdigit(c = readBlocking())) {
+    Serial.print(c);
+    x *= 10;
+    x += c - '0';
+  }
+  return x;
+}
+
+uint8_t readline(char *buff, uint8_t maxbuff, uint16_t timeout) {
+  uint16_t buffidx = 0;
+  boolean timeoutvalid = true;
+  if (timeout == 0) timeoutvalid = false;
+
+  while (true) {
+    if (buffidx > maxbuff) {
+      //Serial.println(F("SPACE"));
+      break;
+    }
+
+    while (Serial.available()) {
+      char c =  Serial.read();
+
+      //Serial.print(c, HEX); Serial.print("#"); Serial.println(c);
+
+      if (c == '\r') continue;
+      if (c == 0xA) {
+        if (buffidx == 0)   // the first 0x0A is ignored
+          continue;
+
+        timeout = 0;         // the second 0x0A is the end of the line
+        timeoutvalid = true;
+        break;
+      }
+      buff[buffidx] = c;
+      buffidx++;
+    }
+
+    if (timeoutvalid && timeout == 0) {
+      //Serial.println(F("TIMEOUT"));
+      break;
+    }
+    delay(1);
+  }
+  buff[buffidx] = 0;  // null term
+  return buffidx;
+}
